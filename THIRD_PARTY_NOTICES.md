@@ -11,9 +11,9 @@ the FastPPT Online workbench.
 - Base commit: `d45820250dfedee6ab25e1783dafb4ad9f44935a`
 - License: MIT
 - Copyright: Copyright (c) 2025-2026 Hugo He
-- Changes in this fork: online page-scoped chat editing, multi-page and global
-  edit orchestration, versioning, FastPPT integration, and authoritative PPTX
-  rendering. The upstream `LICENSE` file is retained unchanged.
+- Planned changes in this fork: online page-scoped chat editing, multi-page and
+  global edit orchestration, versioning, FastPPT integration, and authoritative
+  PPTX rendering. The upstream `LICENSE` file is retained unchanged.
 
 ## FastPPT reference project
 
