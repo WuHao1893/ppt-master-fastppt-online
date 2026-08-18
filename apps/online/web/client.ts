@@ -99,6 +99,10 @@ export async function rollbackOperation(projectId: string, operationId: string):
   return request(`/api/v1/projects/${projectId}/edit-operations/${operationId}/rollback`, { method: 'POST' });
 }
 
+export async function retryFailedOperation(projectId: string, operationId: string): Promise<any> {
+  return request(`/api/v1/projects/${projectId}/edit-operations/${operationId}/retry-failed`, { method: 'POST' });
+}
+
 export async function rollbackVersion(projectId: string, versionId: string): Promise<Project> {
   return (await request<{ page: any }>(`/api/v1/projects/${projectId}/versions/${versionId}/rollback`, { method: 'POST' })).page;
 }

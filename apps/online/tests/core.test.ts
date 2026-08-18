@@ -121,6 +121,34 @@ test('durable job queue persists terminal state and enforces its concurrency lim
   }
 });
 
+test('retry operation targets only failed pages and keeps a parent audit link', async () => {
+  const { directory, store } = await tempStore();
+  const previous = { base: process.env.RELAY_BASE_URL, key: process.env.RELAY_API_KEY, data: process.env.DATA_DIR };
+  delete process.env.RELAY_BASE_URL;
+  delete process.env.RELAY_API_KEY;
+  process.env.DATA_DIR = directory;
+  try {
+    const service = new OnlineService(store, new EventBus(store));
+    const project = await service.createProject('owner_retry', { name: 'Retry deck', themeId: 'test', themeVersion: '1', slidesMarkdown: '# Visual\n\nA page that requests a generated image.' });
+    const pageId = project.pages[0].pageId;
+    const first = await service.createChatTurn('owner_retry', { projectId: project.projectId, deckRevisionId: project.currentDeckRevisionId, target: { mode: 'single', pageIds: [pageId] }, message: '替换当前图片', clientRevision: 0 });
+    assert.equal(first.operation.status, 'failed');
+    assert.deepEqual(first.operation.failedPageIds, [pageId]);
+    const retry = await service.retryFailedPages('owner_retry', project.projectId, first.operation.operationId);
+    assert.equal(retry.parentOperationId, first.operation.operationId);
+    assert.deepEqual(retry.resolvedPageIds, [pageId]);
+    assert.equal(retry.status, 'failed');
+    const retryEntries = service.usage('owner_retry', project.projectId).filter((entry) => entry.operationId === retry.operationId);
+    assert.equal(retryEntries.length, 1);
+    assert.equal(retryEntries[0].status, 'refunded');
+  } finally {
+    if (previous.base === undefined) delete process.env.RELAY_BASE_URL; else process.env.RELAY_BASE_URL = previous.base;
+    if (previous.key === undefined) delete process.env.RELAY_API_KEY; else process.env.RELAY_API_KEY = previous.key;
+    if (previous.data === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = previous.data;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Relay image and Slidev adapters perform real configured HTTP calls', async () => {
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   let imageRequestId = '';

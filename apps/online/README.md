@@ -82,7 +82,7 @@ independently scaled transport.
 
 The REST surface follows the Spec under `/api/v1`: auth, projects, import,
 pages, page split, chat turns, operation confirmation/cancellation, version
-rollback, render/export, and usage ledger. The WebSocket server accepts a
+rollback, group rollback, failed-page retry, render/export, and usage ledger. The WebSocket server accepts a
 one-time `fastppt-ticket.<ticket>` subprotocol plus
 `?projectId=<id>&afterSeq=<n>`, then replays missed events before subscribing to
 live updates. Session tokens are carried by an HttpOnly cookie or REST bearer
@@ -100,13 +100,20 @@ npm run build
 $env:PYTHON_BIN = (Resolve-Path "..\..\..\.venv\Scripts\python.exe").Path
 npm test
 npm run test:pptmaster
+npm run test:golden
 npm run test:powerpoint
 npm run smoke
+npm run test:e2e
 ```
 
 `test:pptmaster` requires the retained official `skills/ppt-master` files and
 verifies native text/shapes, a local image region, zero full-slide rasters, and
-all QA receipts. `test:powerpoint` additionally requires Windows PowerPoint.
-The API smoke flow exercises login, stable page IDs, confirmation, event replay,
-rollback, page split, renderer status, and downloadable PPTX export. Browser
-screenshots used for visual QA are written under `output/playwright/`.
+all QA receipts. `test:golden` runs the seven-page Golden Deck covering cover,
+two-column, timeline, dense data, chart, image, and complex-flow contracts;
+the complex flow is checked for explicit partial-editability marking.
+`test:powerpoint` additionally requires Windows PowerPoint. The API smoke flow
+exercises login, stable page IDs, confirmation, event replay, group rollback,
+failed-page retry, page split, renderer status, and downloadable PPTX export.
+`test:e2e` requires the local API/Web server and drives a real browser through
+login, fact confirmation, execution, group rollback, and multi-page confirmation.
+Browser screenshots used for visual QA are written under `output/playwright/`.

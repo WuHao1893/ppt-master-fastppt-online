@@ -633,6 +633,53 @@ export class OnlineService {
     return operation;
   }
 
+  async retryFailedPages(ownerId: string, projectId: string, operationId: string): Promise<EditOperation> {
+    const project = this.getProject(ownerId, projectId);
+    const source = this.getOperation(ownerId, projectId, operationId);
+    if (!['completed', 'failed'].includes(source.status)) throw new HttpError(409, 'Only completed operations with failed pages can be retried.');
+    const pageIds = [...new Set(source.failedPageIds)];
+    if (!pageIds.length) throw new HttpError(409, 'This operation has no failed pages to retry.');
+    const pages = pageIds.map((pageId) => this.getPage(ownerId, projectId, pageId));
+    const plan = buildEditPlan(project, pages, source.mode, source.message);
+    if (source.structuredPlan.candidateReasons) {
+      plan.candidateReasons = Object.fromEntries(pageIds.flatMap((pageId) => {
+        const reason = source.structuredPlan.candidateReasons?.[pageId];
+        return reason ? [[pageId, reason]] : [];
+      }));
+    }
+    const now = nowIso();
+    const retry: EditOperation = {
+      operationId: makeId('op'),
+      projectId,
+      conversationId: source.conversationId,
+      mode: source.mode,
+      requestedPageIds: pageIds,
+      resolvedPageIds: pageIds,
+      message: source.message,
+      structuredPlan: { ...plan, summary: `仅重试上次失败的 ${pageIds.length} 个页面。` },
+      factImpact: plan.factImpact,
+      unsupportedItems: plan.unsupported,
+      confirmationRequired: plan.requiresConfirmation,
+      confirmedAt: now,
+      resultVersionIds: [],
+      status: 'confirmed',
+      createdAt: now,
+      completedAt: null,
+      failedPageIds: [],
+      estimatedCost: plan.estimatedCost.amount,
+      parentOperationId: source.operationId,
+    };
+    await this.store.update((state) => {
+      state.operations.push(retry);
+      state.messages.filter((message) => message.operationId === source.operationId && Array.isArray(message.meta?.failedPageIds)).forEach((message) => {
+        message.meta = { ...message.meta, retryOperationId: retry.operationId };
+      });
+      state.auditLogs.push({ auditId: makeId('audit'), ownerId, projectId, action: 'operation.retry_failed_pages', payload: { sourceOperationId: source.operationId, retryOperationId: retry.operationId, pageIds }, createdAt: now });
+    });
+    await this.events.publish({ type: 'edit.retry.started', projectId, operationId: retry.operationId, payload: { sourceOperationId: source.operationId, pageIds } });
+    return this.enqueueEdit(ownerId, retry.operationId);
+  }
+
   private async applyOperation(ownerId: string, operationId: string): Promise<EditOperation> {
     const operation = this.store.state.operations.find((candidate) => candidate.operationId === operationId);
     if (!operation) throw new HttpError(404, 'Edit operation not found.');

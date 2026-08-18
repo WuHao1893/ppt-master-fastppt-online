@@ -253,6 +253,11 @@ export async function createApp(): Promise<AppContext> {
     return { operation: await service.rollbackOperation(userId(request), params.projectId, params.operationId) };
   });
 
+  app.post('/api/v1/projects/:projectId/edit-operations/:operationId/retry-failed', async (request) => {
+    const params = request.params as { projectId: string; operationId: string };
+    return { operation: await service.retryFailedPages(userId(request), params.projectId, params.operationId) };
+  });
+
   app.get('/api/v1/projects/:projectId/edit-operations/:operationId', async (request) => {
     const params = request.params as { projectId: string; operationId: string };
     return { operation: service.getOperation(userId(request), params.projectId, params.operationId) };

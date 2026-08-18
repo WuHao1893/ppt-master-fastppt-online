@@ -12,7 +12,9 @@
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "npm run smoke",
     "test:pptmaster": "tsx scripts/pptmaster-smoke.ts",
+    "test:golden": "tsx scripts/golden-smoke.ts",
     "test:powerpoint": "tsx scripts/powerpoint-smoke.ts",
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-browser.ps1",
     "smoke": "tsx scripts/smoke.ts",
     "format:check": "tsc -p tsconfig.json --noEmit"
   },

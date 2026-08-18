@@ -118,6 +118,13 @@ async function main(): Promise<void> {
   assert.equal(protectedTurn.operation.confirmationRequired, true);
   assert.ok(protectedTurn.operation.factImpact.removed.some((value: string) => value.includes('38%')), 'fact impact must identify removed locked metrics');
   await request(login.token, `/api/v1/projects/${project.projectId}/edit-operations/${protectedTurn.operation.operationId}/cancel`, { method: 'POST' });
+  if (!(await request<any>(undefined, '/api/v1/health')).relay.configured) {
+    const failedImage = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/chat/turns`, { method: 'POST', body: JSON.stringify({ projectId: project.projectId, deckRevisionId: afterSplit.currentDeckRevisionId, target: { mode: 'single', pageIds: [factPage.pageId] }, message: '替换当前图片', clientRevision: 4 }) });
+    assert.equal(failedImage.operation.status, 'failed');
+    const retry = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/edit-operations/${failedImage.operation.operationId}/retry-failed`, { method: 'POST' });
+    assert.equal(retry.operation.parentOperationId, failedImage.operation.operationId);
+    assert.deepEqual(retry.operation.resolvedPageIds, failedImage.operation.failedPageIds);
+  }
   await new Promise((resolve) => setTimeout(resolve, 180));
   assert.ok(wsEvents.includes('preview.quick.ready'), `expected quick preview event, got ${wsEvents.join(',')}`);
   if (health.renderer === 'powerpoint_com') assert.ok(wsEvents.includes('preview.pptx.ready'), `expected authoritative PowerPoint event, got ${wsEvents.join(',')}`);
