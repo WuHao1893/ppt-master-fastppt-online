@@ -27,3 +27,27 @@ the FastPPT Online workbench.
 
 Before copying any FastPPT code or assets, verify the upstream license and add
 the required attribution and license text here.
+
+## FastPPT Online runtime dependencies
+
+The online application under `apps/online` is new code in this fork. Its
+runtime dependencies are consumed as unmodified packages; their license files
+remain in `apps/online/node_modules` and are not copied into the upstream
+skill package.
+
+| Package family | Source | SPDX | Introduced |
+| --- | --- | --- | --- |
+| Fastify / `@fastify/*` | https://github.com/fastify/fastify | MIT | 2026-08-18 |
+| React / React DOM | https://github.com/facebook/react | MIT | 2026-08-18 |
+| Vite / TypeScript | https://github.com/vitejs/vite; https://github.com/microsoft/TypeScript | MIT; Apache-2.0 | 2026-08-18 |
+| `ws` / `pg` / `zod` | https://github.com/websockets/ws; https://github.com/brianc/node-postgres; https://github.com/colinhacks/zod | MIT | 2026-08-18 |
+| AWS SDK for JavaScript (`@aws-sdk/client-s3`) | https://github.com/aws/aws-sdk-js-v3 | Apache-2.0 | 2026-08-18 |
+| Lucide React | https://github.com/lucide-icons/lucide | ISC | 2026-08-18 |
+| `python-pptx` worker dependency | https://github.com/scanny/python-pptx | MIT | 2026-08-18 |
+| `pywin32` PowerPoint COM worker dependency | https://github.com/mhammond/pywin32 | PSF-2.0 | 2026-08-18 |
+| `skia-pathops` / `uharfbuzz` | https://github.com/fonttools/skia-pathops; https://github.com/harfbuzz/uharfbuzz | BSD-3-Clause; Apache-2.0 | 2026-08-18 |
+| Pillow / XlsxWriter | https://github.com/python-pillow/Pillow; https://github.com/jmcnamara/XlsxWriter | HPND; BSD-2-Clause | 2026-08-18 |
+
+The FastPPT reference project remains reference-only. No student-project
+Gateway, MCP, Codex/Claude Harness, or source asset is copied into the online
+runtime.

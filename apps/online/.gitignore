@@ -1,0 +1,11 @@
+node_modules/
+!package-lock.json
+dist/
+dist-server/
+data/
+smoke-data/
+start-data/
+output/playwright/
+.playwright-cli/
+.env.local
+*.log
