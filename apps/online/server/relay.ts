@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
+import ipaddr from 'ipaddr.js';
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -39,54 +40,13 @@ function detectedImageType(bytes: Buffer): string | null {
   return null;
 }
 
-function isBlockedIpv4(address: string): boolean {
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const numeric = parts.reduce((value, part) => (value * 256 + part) >>> 0, 0);
-  const inCidr = (base: number[], prefix: number): boolean => {
-    const baseNumeric = base.reduce((value, part) => (value * 256 + part) >>> 0, 0);
-    const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-    return (numeric & mask) === (baseNumeric & mask);
-  };
-  return inCidr([0, 0, 0, 0], 8)
-    || inCidr([10, 0, 0, 0], 8)
-    || inCidr([100, 64, 0, 0], 10)
-    || inCidr([127, 0, 0, 0], 8)
-    || inCidr([169, 254, 0, 0], 16)
-    || inCidr([172, 16, 0, 0], 12)
-    || inCidr([192, 0, 0, 0], 24)
-    || inCidr([192, 0, 2, 0], 24)
-    || inCidr([192, 168, 0, 0], 16)
-    || inCidr([198, 18, 0, 0], 15)
-    || inCidr([198, 51, 100, 0], 24)
-    || inCidr([203, 0, 113, 0], 24)
-    || inCidr([224, 0, 0, 0], 4);
-}
-
 function isBlockedIp(address: string): boolean {
   const normalized = address.toLowerCase().split('%', 1)[0];
-  if (isIP(normalized) === 4) return isBlockedIpv4(normalized);
-  if (isIP(normalized) !== 6) return true;
-  if (normalized.startsWith('::ffff:')) {
-    const mapped = normalized.slice('::ffff:'.length);
-    if (isIP(mapped) === 4) return isBlockedIpv4(mapped);
-    const groups = mapped.split(':');
-    if (groups.length === 2) {
-      const high = Number.parseInt(groups[0], 16);
-      const low = Number.parseInt(groups[1], 16);
-      if (Number.isFinite(high) && Number.isFinite(low)) {
-        return isBlockedIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
-      }
-    }
-    return true;
-  }
-  return normalized === '::'
-    || normalized === '::1'
-    || normalized.startsWith('fc')
-    || normalized.startsWith('fd')
-    || /^fe[89ab]/.test(normalized)
-    || normalized.startsWith('ff')
-    || normalized.startsWith('2001:db8:');
+  if (!ipaddr.isValid(normalized)) return true;
+  const parsed = ipaddr.parse(normalized);
+  if (parsed.kind() === 'ipv4') return parsed.range() !== 'unicast';
+  const globalIpv6 = ipaddr.IPv6.parseCIDR('2000::/3');
+  return parsed.range() !== 'unicast' || !parsed.match(globalIpv6);
 }
 
 async function validateRemoteImageUrl(url: URL, lookup: NonNullable<RemoteImageDownloadOptions['lookup']>): Promise<Array<{ address: string }>> {

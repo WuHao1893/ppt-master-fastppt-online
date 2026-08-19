@@ -140,8 +140,29 @@ test('remote image download rejects unsafe targets, redirects, media types, and 
     throw new Error('fetch should not be reached');
   }) as typeof fetch;
   await assert.rejects(() => downloadRemoteImage('http://images.example.test/a.png', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /must use HTTPS/i);
-  await assert.rejects(() => downloadRemoteImage('https://127.0.0.1/a.png', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /private or non-routable/i);
-  await assert.rejects(() => downloadRemoteImage('https://169.254.169.254/latest/meta-data', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /private or non-routable/i);
+  const blockedAddresses = [
+    '127.0.0.1',
+    '169.254.169.254',
+    '198.18.0.1',
+    '192.0.2.1',
+    '240.0.0.1',
+    '255.255.255.255',
+    '[fec0::1]',
+    '[64:ff9b::7f00:1]',
+    '[64:ff9b:1::a00:1]',
+    '[::ffff:127.0.0.1]',
+    '[::ffff:10.0.0.1]',
+    '[2002:7f00:1::1]',
+    '[2001::1]',
+    '[2001:db8::1]',
+  ];
+  for (const address of blockedAddresses) {
+    await assert.rejects(() => downloadRemoteImage(`https://${address}/a.png`, undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /private or non-routable/i);
+  }
+  await assert.rejects(() => downloadRemoteImage('https://mixed.example.test/a.png', undefined, {
+    fetchImpl: unusedFetch,
+    lookup: async () => [{ address: '8.8.8.8' }, { address: '10.0.0.1' }],
+  }), /private or non-routable/i);
   assert.equal(fetchCalls, 0);
 
   const redirectFetch = (async (): Promise<Response> => new Response(null, { status: 302, headers: { Location: 'https://10.0.0.1/secret.png' } })) as typeof fetch;
@@ -170,6 +191,8 @@ test('remote image download rejects unsafe targets, redirects, media types, and 
   const downloaded = await downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: imageFetch, lookup: publicLookup, maxBytes: 16 });
   assert.equal(downloaded.bytes.equals(png), true);
   assert.equal(downloaded.mimeType, 'image/png');
+  await downloadRemoteImage('https://8.8.8.8/a.png', undefined, { fetchImpl: imageFetch, lookup: publicLookup, maxBytes: 16 });
+  await downloadRemoteImage('https://[2606:4700:4700::1111]/a.png', undefined, { fetchImpl: imageFetch, lookup: publicLookup, maxBytes: 16 });
 });
 
 test('durable job queue persists terminal state and enforces its concurrency limit', async () => {

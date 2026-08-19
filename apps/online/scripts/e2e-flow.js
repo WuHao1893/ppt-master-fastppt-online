@@ -71,6 +71,28 @@ async (page) => {
     assert(imageEvidence.status === 200 && imageEvidence.contentType === 'image/png' && imageEvidence.png, `Authoritative content was not a PNG: ${JSON.stringify(imageEvidence)}`);
     await page.screenshot({ path: 'output/playwright/authority-proof-latest.png', fullPage: true });
   }
+  const currentPageState = await page.evaluate(async (projectId) => {
+    const response = await fetch(`/api/v1/projects/${projectId}`, { credentials: 'include' });
+    const body = await response.json();
+    return { versionId: body.project.pages[0].currentVersionId, status: body.project.pages[0].status };
+  }, created.body.project.projectId);
+  const currentVersionId = currentPageState.versionId;
+  const currentStatus = currentPageState.status;
+  await page.waitForFunction((versionId) => document.querySelector('.version-label')?.getAttribute('data-version-id') === versionId, currentVersionId);
+  const initialVersion = created.body.project.pages[0].versions[0];
+  await page.getByTitle('\u7248\u672c\u5386\u53f2').click();
+  const initialHistoryRow = page.locator('.history-row').filter({ hasText: initialVersion.versionId });
+  await initialHistoryRow.getByTitle('\u5bf9\u6bd4\u7248\u672c').click();
+  await page.waitForFunction((versionId) => document.querySelector('.version-label')?.getAttribute('data-version-id') === versionId, initialVersion.versionId);
+  assert(await page.locator('.version-label').getAttribute('data-version-id') === initialVersion.versionId, 'Comparison toolbar did not switch to the historical version id.');
+  assert((await page.locator('.status-pill').innerText()).startsWith('\u5bf9\u6bd4 \u00b7 '), 'Comparison toolbar did not identify comparison mode.');
+  const expectedComparisonStatus = initialVersion.previewKind === 'pptx_authoritative' ? 'authoritative' : initialVersion.previewKind;
+  assert(await page.locator('.status-pill').getAttribute('data-page-status') === expectedComparisonStatus, 'Comparison toolbar did not use the historical preview status.');
+  await page.screenshot({ path: 'output/playwright/compare-status-proof-latest.png', fullPage: true });
+  await initialHistoryRow.getByTitle('\u5bf9\u6bd4\u7248\u672c').click();
+  await page.waitForFunction((versionId) => document.querySelector('.version-label')?.getAttribute('data-version-id') === versionId, currentVersionId);
+  assert(await page.locator('.version-label').getAttribute('data-version-id') === currentVersionId, 'Toolbar did not restore the current version id after comparison.');
+  assert(await page.locator('.status-pill').getAttribute('data-page-status') === currentStatus, 'Toolbar did not restore the current page status after comparison.');
   const rollback = page.getByRole('button', { name: '\u64a4\u9500\u672c\u6b21\u64cd\u4f5c' }).last();
   await rollback.waitFor({ state: 'visible' });
   await rollback.click();
