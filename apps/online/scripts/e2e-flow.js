@@ -101,6 +101,21 @@ async (page) => {
     const body = await response.json();
     return body.project?.pages?.[0]?.body?.includes('42%');
   }, created.body.project.projectId);
+  const rolledBackPage = await page.evaluate(async (projectId) => {
+    const response = await fetch(`/api/v1/projects/${projectId}`, { credentials: 'include' });
+    const body = await response.json();
+    return body.project.pages[0];
+  }, created.body.project.projectId);
+  await page.waitForFunction((versionId) => document.querySelector(`.history-row[data-version-id="${versionId}"]`)?.getAttribute('data-current') === 'true', rolledBackPage.currentVersionId);
+  const historyRows = page.locator('.history-row');
+  const restoredCurrentRow = page.locator(`.history-row[data-version-id="${rolledBackPage.currentVersionId}"]`);
+  assert(await page.locator('.history-row[data-current="true"]').count() === 1, 'History must mark exactly one current version after rollback.');
+  assert((await restoredCurrentRow.locator('.history-info strong').innerText()) === '\u5f53\u524d\u7248\u672c', 'Restored version was not labeled as current.');
+  assert(await restoredCurrentRow.getByTitle('\u6062\u590d\u6b64\u7248\u672c').count() === 0, 'Current version incorrectly offered a restore action.');
+  const newestNonCurrentRow = historyRows.first();
+  assert(await newestNonCurrentRow.getAttribute('data-current') === 'false', 'Newest immutable version was incorrectly marked current after rollback.');
+  assert(await newestNonCurrentRow.getByTitle('\u6062\u590d\u6b64\u7248\u672c').count() === 1, 'Newest non-current version did not offer a restore action.');
+  await page.screenshot({ path: 'output/playwright/history-current-label-proof-latest.png', fullPage: true });
 
   await page.locator('.check-box').nth(0).click();
   await page.locator('.check-box').nth(1).click();
