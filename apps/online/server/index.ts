@@ -78,6 +78,9 @@ function replyError(reply: FastifyReply, error: unknown): void {
 export async function createApp(): Promise<AppContext> {
   const corsOrigin = process.env.CORS_ORIGIN?.trim() || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173');
   if (!corsOrigin || corsOrigin === '*') throw new Error('CORS_ORIGIN must contain explicit trusted origins.');
+  const apiInstanceCount = Number(process.env.API_INSTANCE_COUNT || 1);
+  if (!Number.isInteger(apiInstanceCount) || apiInstanceCount < 1) throw new Error('API_INSTANCE_COUNT must be a positive integer.');
+  if (process.env.NODE_ENV === 'production' && apiInstanceCount !== 1) throw new Error('This release supports exactly one API writer instance; configure API_INSTANCE_COUNT=1.');
   const store = await createStore();
   const events = new EventBus(store);
   const auth = new AuthService(store);
@@ -118,6 +121,8 @@ export async function createApp(): Promise<AppContext> {
     renderer: process.env.POWERPOINT_RENDERER === 'powerpoint' || process.env.POWERPOINT_RENDERER === 'com' ? 'powerpoint_com' : 'unavailable',
     exporter: process.env.PPTX_EXPORT_ENGINE === 'legacy' ? 'legacy_development_fallback' : 'ppt_master_svg_to_drawingml',
     queue: process.env.QUEUE_MODE || 'durable_store',
+    deploymentMode: 'single_api_writer',
+    apiInstanceCount,
     objectStorage: service.objectStorageStatus(),
     relay: service.relayStatus(),
   }));
@@ -297,6 +302,18 @@ export async function createApp(): Promise<AppContext> {
   app.get('/api/v1/projects/:projectId/artifacts', async (request) => {
     const params = request.params as { projectId: string };
     return { artifacts: service.artifacts(userId(request), params.projectId).map((artifact) => ({ ...artifact, assetPath: null })) };
+  });
+
+  app.get('/api/v1/projects/:projectId/artifacts/:artifactId/content', async (request, reply) => {
+    const params = request.params as { projectId: string; artifactId: string };
+    const artifact = await service.readAuthoritativeRender(userId(request), params.projectId, params.artifactId);
+    return reply
+      .type('image/png')
+      .header('Cache-Control', 'private, max-age=31536000, immutable')
+      .header('Content-Disposition', 'inline')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Length', String(artifact.bytes.length))
+      .send(artifact.bytes);
   });
 
   app.get('/api/v1/projects/:projectId/prompt-snapshots', async (request) => {

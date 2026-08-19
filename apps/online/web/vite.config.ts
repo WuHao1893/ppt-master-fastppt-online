@@ -8,6 +8,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root,
   plugins: [react()],
+  define: { 'import.meta.env.VITE_WS_PORT': JSON.stringify(process.env.WS_PORT || '8788') },
   resolve: { alias: { '@shared': new URL('../shared', import.meta.url).pathname } },
   server: {
     port: Number(process.env.WEB_PORT || 5173),

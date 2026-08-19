@@ -34,6 +34,7 @@ import {
 import type { ConversationMessage, EditOperation, EventEnvelope, ExportJob, Page, PageVersion, Project, User } from '../shared/models.js';
 import {
   archiveProject,
+  authoritativeRenderUrl,
   cancelOperation,
   clearToken,
   copyProject,
@@ -88,6 +89,19 @@ function currentVersion(page: Page): PageVersion {
   return page.versions.find((version) => version.versionId === page.currentVersionId) || page.versions[page.versions.length - 1];
 }
 
+function PagePreview({ projectId, version }: { projectId: string; version: PageVersion }): JSX.Element {
+  const [authorityFailed, setAuthorityFailed] = useState(false);
+  const artifactId = version.previewKind === 'pptx_authoritative' ? version.pptxPageRenderId : null;
+  useEffect(() => setAuthorityFailed(false), [artifactId]);
+  if (artifactId && !authorityFailed) {
+    return <div className="slide-render authoritative-render"><img src={authoritativeRenderUrl(projectId, artifactId)} alt={`PowerPoint 权威渲染 ${version.versionId}`} data-artifact-id={artifactId} onError={() => setAuthorityFailed(true)} /></div>;
+  }
+  if (authorityFailed) {
+    return <div className="slide-render authority-load-fallback" data-preview-kind="authority-load-fallback"><div className="authority-fallback-note"><CircleAlert size={13} />权威 PNG 加载失败，正在显示同版本 SVG 回退</div><div dangerouslySetInnerHTML={{ __html: version.previewSvg }} /></div>;
+  }
+  return <div className="slide-render" data-preview-kind={version.previewKind} dangerouslySetInnerHTML={{ __html: version.previewSvg }} />;
+}
+
 function App(): JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -114,6 +128,7 @@ function App(): JSX.Element {
   const activePage = visiblePages.find((page) => page.pageId === currentPageId) || visiblePages[0];
   const activeVersion = activePage ? currentVersion(activePage) : null;
   const compareVersion = activePage?.versions.find((version) => version.versionId === compareVersionId);
+  const displayedVersion = compareVersion || activeVersion;
 
   const refreshProject = useCallback(async (projectId: string) => {
     const [nextProject, nextMessages] = await Promise.all([loadProject(projectId), loadMessages(projectId)]);
@@ -349,7 +364,7 @@ function App(): JSX.Element {
     <main className="main-stage">
       <header className="topbar"><div className="breadcrumbs"><span>工作台</span><ArrowLeft size={14} /><strong>{project.name}</strong></div><div className="top-actions"><span className="saved-state"><span className="save-dot" />已保存</span><button className="outline-button" onClick={() => void onExport()} disabled={busy}><Download size={15} />导出 PPTX</button><button className="icon-button" title="页面全屏" onClick={() => document.documentElement.requestFullscreen?.()}><Expand size={17} /></button></div></header>
       <section className="canvas-toolbar"><div className="toolbar-left"><button className="tool-button active"><LayoutPanelLeft size={16} />预览</button><button className="tool-button" onClick={() => setEventNote('合同视图已在右侧消息元数据中保留')}><Layers3 size={16} />合同</button></div><div className="toolbar-center"><span className={`status-pill ${statusTone[activePage?.status || 'untouched']}`}><span className="status-dot" />{statusText[activePage?.status || 'untouched']}</span><span className="version-label">{activeVersion?.versionId || 'ver_pending'}</span></div><div className="toolbar-right"><button className="icon-button" title="版本历史" onClick={() => setShowHistory((value) => !value)}><History size={17} /></button><button className="icon-button" title="撤销到上一版本" onClick={() => activePage && activePage.versions.length > 1 && void onRollback(activePage.versions[activePage.versions.length - 2].versionId)} disabled={!activePage || activePage.versions.length < 2}><Undo2 size={17} /></button></div></section>
-      <section className="preview-workspace"><div className="preview-wrap"><div className="preview-frame"><div className="preview-chrome"><span className="chrome-dot red" /><span className="chrome-dot amber" /><span className="chrome-dot green" /><span className="preview-url">fastppt.online / preview / {activePage?.pageId}</span><button className="icon-button subtle" title="刷新预览" onClick={() => project && void refreshProject(project.projectId)}><RotateCcw size={14} /></button></div>{activeVersion ? <div className="slide-render" dangerouslySetInnerHTML={{ __html: compareVersion ? compareVersion.previewSvg : activeVersion.previewSvg }} /> : <div className="empty-slide">选择一个页面开始预览</div>}<div className="preview-legend"><span><span className="legend-line quick" />快速预览</span><span><span className="legend-line authority" />PPTX 权威</span><span><span className="legend-line fallback" />SVG 回退</span></div></div><div className="preview-caption"><div><strong>第 {(activePage?.orderIndex ?? 0) + 1} 页</strong><span>{activePage?.title}</span></div><div className="caption-right"><span className="editable-tag"><Sparkles size={13} />{activePage?.editableLevel}</span>{activeVersion?.previewKind === 'svg_fallback' && <span className="warning-caption"><CircleAlert size={13} />可能与 PPTX 有差异</span>}</div></div></div>{showHistory && activePage && <HistoryPanel page={activePage} compareId={compareVersionId} onCompare={setCompareVersionId} onRollback={onRollback} onClose={() => setShowHistory(false)} />}</section>
+      <section className="preview-workspace"><div className="preview-wrap"><div className="preview-frame"><div className="preview-chrome"><span className="chrome-dot red" /><span className="chrome-dot amber" /><span className="chrome-dot green" /><span className="preview-url">fastppt.online / preview / {activePage?.pageId}</span><button className="icon-button subtle" title="刷新预览" onClick={() => project && void refreshProject(project.projectId)}><RotateCcw size={14} /></button></div>{displayedVersion ? <PagePreview projectId={project.projectId} version={displayedVersion} /> : <div className="empty-slide">选择一个页面开始预览</div>}<div className="preview-legend"><span><span className="legend-line quick" />快速预览</span><span><span className="legend-line authority" />PPTX 权威</span><span><span className="legend-line fallback" />SVG 回退</span></div></div><div className="preview-caption"><div><strong>第 {(activePage?.orderIndex ?? 0) + 1} 页</strong><span>{activePage?.title}</span></div><div className="caption-right"><span className="editable-tag"><Sparkles size={13} />{activePage?.editableLevel}</span>{activeVersion?.previewKind === 'svg_fallback' && <span className="warning-caption"><CircleAlert size={13} />可能与 PPTX 有差异</span>}</div></div></div>{showHistory && activePage && <HistoryPanel page={activePage} compareId={compareVersionId} onCompare={setCompareVersionId} onRollback={onRollback} onClose={() => setShowHistory(false)} />}</section>
       {exportJob && <ExportBanner job={exportJob} project={project} onDismiss={() => setExportJob(null)} />}
     </main>
 

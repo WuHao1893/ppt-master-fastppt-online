@@ -8,7 +8,7 @@ import { AuthService } from '../server/auth.js';
 import { EventBus } from '../server/events.js';
 import { buildEditPlan } from '../server/plans.js';
 import { SlidevQuickPreviewWorker } from '../server/quickPreview.js';
-import { RelayModelAdapter } from '../server/relay.js';
+import { downloadRemoteImage, RelayModelAdapter } from '../server/relay.js';
 import { OnlineService } from '../server/service.js';
 import { FileStore } from '../server/store.js';
 import { DurableJobQueue } from '../server/jobQueue.js';
@@ -98,6 +98,78 @@ test('signed session survives AuthService recreation and WebSocket tickets are o
     if (previousSecret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = previousSecret;
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+test('production allowlist and access code can bootstrap the first user', async () => {
+  const { directory, store } = await tempStore();
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    secret: process.env.AUTH_SECRET,
+    code: process.env.AUTH_LOGIN_CODE,
+    allowed: process.env.AUTH_ALLOWED_EMAILS,
+    devLogin: process.env.ALLOW_DEV_LOGIN,
+  };
+  process.env.NODE_ENV = 'production';
+  process.env.AUTH_SECRET = 'production-test-secret-at-least-32-characters';
+  process.env.AUTH_LOGIN_CODE = 'invite-code';
+  process.env.AUTH_ALLOWED_EMAILS = 'first@example.test';
+  process.env.ALLOW_DEV_LOGIN = 'false';
+  try {
+    const auth = new AuthService(store);
+    const login = await auth.login('first@example.test', 'First User', 'invite-code');
+    assert.equal(login.user.email, 'first@example.test');
+    assert.equal(store.state.users.length, 1);
+    assert.equal(auth.verify(login.token)?.userId, login.user.userId);
+    await assert.rejects(() => auth.login('blocked@example.test', 'Blocked', 'invite-code'), /not allowed/i);
+    await assert.rejects(() => auth.login('first@example.test', 'First User', 'wrong-code'), /invalid access code/i);
+  } finally {
+    if (previous.nodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.secret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = previous.secret;
+    if (previous.code === undefined) delete process.env.AUTH_LOGIN_CODE; else process.env.AUTH_LOGIN_CODE = previous.code;
+    if (previous.allowed === undefined) delete process.env.AUTH_ALLOWED_EMAILS; else process.env.AUTH_ALLOWED_EMAILS = previous.allowed;
+    if (previous.devLogin === undefined) delete process.env.ALLOW_DEV_LOGIN; else process.env.ALLOW_DEV_LOGIN = previous.devLogin;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('remote image download rejects unsafe targets, redirects, media types, and oversized bodies', async () => {
+  const publicLookup = async (): Promise<Array<{ address: string }>> => [{ address: '93.184.216.34' }];
+  let fetchCalls = 0;
+  const unusedFetch = (async (): Promise<Response> => {
+    fetchCalls += 1;
+    throw new Error('fetch should not be reached');
+  }) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('http://images.example.test/a.png', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /must use HTTPS/i);
+  await assert.rejects(() => downloadRemoteImage('https://127.0.0.1/a.png', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /private or non-routable/i);
+  await assert.rejects(() => downloadRemoteImage('https://169.254.169.254/latest/meta-data', undefined, { fetchImpl: unusedFetch, lookup: publicLookup }), /private or non-routable/i);
+  assert.equal(fetchCalls, 0);
+
+  const redirectFetch = (async (): Promise<Response> => new Response(null, { status: 302, headers: { Location: 'https://10.0.0.1/secret.png' } })) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: redirectFetch, lookup: publicLookup }), /private or non-routable/i);
+
+  const textFetch = (async (): Promise<Response> => new Response('not an image', { status: 200, headers: { 'Content-Type': 'text/plain' } })) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: textFetch, lookup: publicLookup }), /unsupported media type/i);
+
+  const disguisedFetch = (async (): Promise<Response> => new Response('not a png', { status: 200, headers: { 'Content-Type': 'image/png' } })) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: disguisedFetch, lookup: publicLookup }), /do not match/i);
+
+  const declaredLargeFetch = (async (): Promise<Response> => new Response('x', { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': '100' } })) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: declaredLargeFetch, lookup: publicLookup, maxBytes: 8 }), /exceeded the 8 byte limit/i);
+
+  const streamedLargeFetch = (async (): Promise<Response> => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+      controller.enqueue(new Uint8Array([5, 6, 7, 8]));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'Content-Type': 'image/png' } })) as typeof fetch;
+  await assert.rejects(() => downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: streamedLargeFetch, lookup: publicLookup, maxBytes: 6 }), /while streaming/i);
+
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const imageFetch = (async (): Promise<Response> => new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': String(png.length) } })) as typeof fetch;
+  const downloaded = await downloadRemoteImage('https://images.example.test/a.png', undefined, { fetchImpl: imageFetch, lookup: publicLookup, maxBytes: 16 });
+  assert.equal(downloaded.bytes.equals(png), true);
+  assert.equal(downloaded.mimeType, 'image/png');
 });
 
 test('durable job queue persists terminal state and enforces its concurrency limit', async () => {

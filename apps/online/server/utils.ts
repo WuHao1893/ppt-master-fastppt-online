@@ -8,8 +8,8 @@ export function makeId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
 }
 
-export function sha256(value: string): string {
-  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+export function sha256(value: crypto.BinaryLike): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 export function escapeXml(value: string): string {

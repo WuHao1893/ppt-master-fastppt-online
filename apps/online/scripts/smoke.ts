@@ -25,8 +25,10 @@ async function waitForExport(token: string, projectId: string, exportId: string)
 }
 
 async function main(): Promise<void> {
-  const health = await request<{ renderer: string; exporter: string }>(undefined, '/api/v1/health');
+  const health = await request<{ renderer: string; exporter: string; deploymentMode: string; apiInstanceCount: number }>(undefined, '/api/v1/health');
   assert.equal(health.exporter, 'ppt_master_svg_to_drawingml');
+  assert.equal(health.deploymentMode, 'single_api_writer');
+  assert.equal(health.apiInstanceCount, 1);
   const expectedPageStatus = health.renderer === 'powerpoint_com' ? 'authoritative' : 'svg_fallback';
   const login = await request<{ token: string }>(undefined, '/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email: `smoke-${Date.now()}@fastppt.local`, name: 'Smoke Runner' }) });
   const markdown = '# Cover 2026\n\n38% baseline and 2026 target.\n---\n# Two-column evidence\n\nKeep all numbers: 38% and 68%.\n---\n# Timeline delivery\n\nThree stages from plan to QA.';
@@ -51,6 +53,17 @@ async function main(): Promise<void> {
   const refreshedFirst = refreshed.pages.find((page: any) => page.pageId === first.pageId);
   assert.equal(refreshedFirst.versions.length, 2);
   assert.equal(refreshedFirst.status, expectedPageStatus);
+  if (health.renderer === 'powerpoint_com') {
+    const version = refreshedFirst.versions.find((candidate: any) => candidate.versionId === refreshedFirst.currentVersionId);
+    assert.equal(version.previewKind, 'pptx_authoritative');
+    assert.ok(version.pptxPageRenderId, 'authoritative version must reference a render artifact');
+    const renderResponse = await fetch(`${apiBase}/api/v1/projects/${project.projectId}/artifacts/${version.pptxPageRenderId}/content`, { headers: { Authorization: `Bearer ${login.token}` } });
+    assert.equal(renderResponse.ok, true);
+    assert.equal(renderResponse.headers.get('content-type'), 'image/png');
+    const renderBytes = Buffer.from(await renderResponse.arrayBuffer());
+    assert.ok(renderBytes.length > 1_000, 'authoritative page render must contain a non-empty PNG');
+    assert.equal(renderBytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), true, 'authoritative page render must have a PNG signature');
+  }
 
   const multiPlan = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/chat/turns`, { method: 'POST', body: JSON.stringify({ projectId: project.projectId, deckRevisionId: refreshed.currentDeckRevisionId, target: { mode: 'multi', pageIds: [first.pageId, second.pageId] }, message: '把标题改短并统一样式', clientRevision: 1 }) });
   assert.equal(multiPlan.operation.confirmationRequired, true);
@@ -99,6 +112,7 @@ async function main(): Promise<void> {
   assert.ok(audit.audit.length >= 5, 'audit log should record login, project, chat, rollback and export activity');
   const artifacts = await request<{ artifacts: any[] }>(login.token, `/api/v1/projects/${project.projectId}/artifacts`);
   assert.ok(artifacts.artifacts.some((artifact) => artifact.provenance && artifact.source === 'deterministic_svg'), 'preview provenance must be queryable');
+  if (health.renderer === 'powerpoint_com') assert.ok(artifacts.artifacts.some((artifact) => artifact.kind === 'pptx_page_render' && artifact.source === 'powerpoint_com' && artifact.assetPath === null), 'PowerPoint PNG provenance must be registered without exposing its object key');
   const snapshots = await request<{ promptSnapshots: any[] }>(login.token, `/api/v1/projects/${project.projectId}/prompt-snapshots`);
   assert.ok(snapshots.promptSnapshots.some((snapshot) => snapshot.prompt && snapshot.hash), 'complete prompt snapshots must be queryable');
   const beforeSplit = imported.project.pages.find((page: any) => page.pageId === second.pageId).versions.length;

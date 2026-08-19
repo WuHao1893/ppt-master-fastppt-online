@@ -35,11 +35,11 @@ export class AuthService {
     }
     let user = this.store.state.users.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
     if (!user) {
-      if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOGIN !== 'true') throw new HttpError(403, 'Self-service login is disabled in production. Configure an identity provider or explicitly enable development login.');
+      if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_LOGIN === 'false') throw new HttpError(403, 'Development self-service login is disabled.');
       user = { userId: makeId('usr'), email: normalizedEmail, name: requestedName || normalizedEmail.split('@')[0], createdAt: nowIso() };
       await this.store.update((state) => {
         state.users.push(user!);
-        state.auditLogs.push({ auditId: makeId('audit'), ownerId: user!.userId, action: 'auth.login.created_user', payload: { email }, createdAt: nowIso() });
+        state.auditLogs.push({ auditId: makeId('audit'), ownerId: user!.userId, action: 'auth.login.created_user', payload: { email, invitation: process.env.NODE_ENV === 'production' ? 'allowlist_access_code' : 'development' }, createdAt: nowIso() });
       });
     }
     const token = await this.issueToken(user.userId, 1000 * 60 * 60 * 24 * 7);

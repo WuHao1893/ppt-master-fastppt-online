@@ -36,7 +36,11 @@ The default `POWERPOINT_RENDERER=unavailable` is deliberately visible as
 `SVG 回退` in the workbench. On Windows with desktop PowerPoint and `pywin32`, set
 `POWERPOINT_RENDERER=com` to run `worker/render_powerpoint.py`. This renders the
 same exported PPTX through Microsoft PowerPoint and records authoritative
-1920x1080 page images.
+1920x1080 page images. The PNG is registered in object storage and served to
+the browser through an owner-scoped artifact endpoint; the workbench replaces
+the quick SVG only after that exact-version PNG is available. Configure a short,
+writable `POWERPOINT_STAGING_DIR` (for example `C:\fppt-com`) so COM never sees
+deep project or `DATA_DIR` paths.
 
 For local service dependencies, `docker compose up -d` starts PostgreSQL,
 Redis, and MinIO with the schema mounted from `database/schema.sql`; the init
@@ -48,10 +52,20 @@ execution, dispatched with the bounded `JOB_CONCURRENCY` worker, and re-enqueued
 after an interrupted process restart. `REDIS_URL` remains reserved for a future
 independently scaled transport.
 
+This release is deliberately a single-writer deployment. Set
+`API_INSTANCE_COUNT=1`; production startup rejects a larger value because the
+PostgreSQL store still keeps a process-local working snapshot. The health
+response reports `deploymentMode=single_api_writer`. Horizontal API writers
+require transactional row-level commands and database-assigned event sequences
+in a future release.
+
 ## Behaviour covered
 
 - Persisted, revocable login sessions and owner-scoped project access. Production
   login requires `AUTH_ALLOWED_EMAILS` and the server-side `AUTH_LOGIN_CODE`.
+  An allowlisted address with the correct code is a controlled invitation and
+  can create the first user in an empty production database; `ALLOW_DEV_LOGIN`
+  only controls arbitrary development self-registration.
 - `slides.md` parsing into stable `project_id`/`page_id`, page contracts and
   locked fact anchors.
 - Current-page chat executes after plan validation without an Apply button.
@@ -111,9 +125,14 @@ verifies native text/shapes, a local image region, zero full-slide rasters, and
 all QA receipts. `test:golden` runs the seven-page Golden Deck covering cover,
 two-column, timeline, dense data, chart, image, and complex-flow contracts;
 the complex flow is checked for explicit partial-editability marking.
-`test:powerpoint` additionally requires Windows PowerPoint. The API smoke flow
+`test:powerpoint` additionally requires Windows PowerPoint and renders a PPTX
+whose original path exceeds 255 characters through the short COM staging area.
+The API smoke flow
 exercises login, stable page IDs, confirmation, event replay, group rollback,
-failed-page retry, page split, renderer status, and downloadable PPTX export.
+failed-page retry, page split, renderer status, authenticated PowerPoint PNG
+bytes, and downloadable PPTX export.
 `test:e2e` requires the local API/Web server and drives a real browser through
-login, fact confirmation, execution, group rollback, and multi-page confirmation.
+login, fact confirmation, execution, group rollback, multi-page confirmation,
+decoded authoritative PNG dimensions when COM rendering is enabled, and an
+offline WebSocket interval with missed-event replay after reconnection.
 Browser screenshots used for visual QA are written under `output/playwright/`.

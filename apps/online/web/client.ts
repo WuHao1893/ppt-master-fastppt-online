@@ -119,13 +119,17 @@ export function exportDownloadUrl(projectId: string, exportId: string): string {
   return `${API_BASE}/api/v1/projects/${projectId}/exports/${exportId}/download`;
 }
 
+export function authoritativeRenderUrl(projectId: string, artifactId: string): string {
+  return `${API_BASE}/api/v1/projects/${projectId}/artifacts/${artifactId}/content`;
+}
+
 export interface ProjectSocket {
   close(): void;
 }
 
 export async function openProjectSocket(projectId: string, onEvent: (event: EventEnvelope) => void): Promise<ProjectSocket | null> {
   const configured = import.meta.env.VITE_WS_URL;
-  const url = configured || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8788`;
+  const url = configured || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:${import.meta.env.VITE_WS_PORT || '8788'}`;
   let closed = false;
   let retry = 0;
   let lastSeq = 0;

@@ -737,6 +737,7 @@ export class OnlineService {
         const quickPreview = await this.quickPreview.render(project, page, edited.title, edited.body, nextLayout);
         let authoritativeRenderId: string | null = null;
         let authoritativeNote = '';
+        let authoritativeArtifact: PreviewArtifact | null = null;
         const renderer = process.env.POWERPOINT_RENDERER === 'powerpoint' || process.env.POWERPOINT_RENDERER === 'com';
         const previewArtifactId = makeId('artifact');
         const visualArtifactId = imageChange ? previewArtifactId : priorVersion.visualArtifactId || null;
@@ -816,14 +817,45 @@ export class OnlineService {
               await this.exportVisualAssets(renderProject),
             );
             const renderResult = await runPowerPointRender(exportResult.outputPath, path.join(pageRenderDir, 'powerpoint'));
-            authoritativeRenderId = `render_${sha256(JSON.stringify(renderResult)).slice(0, 24)}`;
+            if (renderResult.renders.length !== 1) throw new Error(`Expected one authoritative page render, received ${renderResult.renders.length}.`);
+            const render = renderResult.renders[0];
+            const renderBytes = await fs.readFile(render.path);
+            if (renderBytes.length < 1_000 || render.width <= 0 || render.height <= 0) throw new Error('PowerPoint returned an empty or invalid PNG render.');
+            authoritativeRenderId = makeId('artifact');
+            const stored = await this.objectStorage.putFile(
+              render.path,
+              `projects/${ownerId}/${project.projectId}/pages/${pageId}/versions/${version.versionId}/${authoritativeRenderId}.png`,
+              'image/png',
+            );
+            authoritativeArtifact = {
+              artifactId: authoritativeRenderId,
+              projectId: project.projectId,
+              pageId,
+              versionId: version.versionId,
+              kind: 'pptx_page_render',
+              promptSnapshotId: version.promptSnapshotId,
+              model: renderResult.renderer,
+              width: render.width,
+              height: render.height,
+              quality: 'authoritative',
+              source: 'powerpoint_com',
+              provenance: {
+                renderer: renderResult.renderer,
+                sha256: sha256(renderBytes),
+                sourceRevision: version.sourceRevision,
+                slideIndex: render.slide_index,
+              },
+              createdAt: nowIso(),
+              assetPath: stored.objectKey,
+            };
             authoritativeNote = `PowerPoint COM rendered ${renderResult.renders.length} page(s).`;
           } catch (renderError) {
             authoritativeNote = `PowerPoint COM render unavailable: ${(renderError as Error).message}`;
           }
         }
         const authoritative = Boolean(authoritativeRenderId);
-        await this.store.update(() => {
+        await this.store.update((state) => {
+          if (authoritativeArtifact) state.artifacts.push(authoritativeArtifact);
           version.status = 'ready';
           version.previewKind = authoritative ? 'pptx_authoritative' : 'svg_fallback';
           version.pptxPageRenderId = authoritativeRenderId;
@@ -1089,6 +1121,16 @@ export class OnlineService {
     const artifact = path.resolve(job.artifactPath);
     if (!artifact.startsWith(`${root}${path.sep}`)) throw new HttpError(403, 'Artifact path is outside the project store.');
     return { bytes: await fs.readFile(artifact), fileName: job.artifactName || path.basename(artifact) };
+  }
+
+  async readAuthoritativeRender(ownerId: string, projectId: string, artifactId: string): Promise<{ bytes: Buffer; width: number; height: number }> {
+    const project = this.getProject(ownerId, projectId);
+    const artifact = this.store.state.artifacts.find((candidate) => candidate.artifactId === artifactId && candidate.projectId === projectId);
+    if (!artifact || artifact.kind !== 'pptx_page_render' || artifact.source !== 'powerpoint_com' || !artifact.assetPath) throw new HttpError(404, 'Authoritative page render not found.');
+    const page = project.pages.find((candidate) => candidate.pageId === artifact.pageId);
+    const version = page?.versions.find((candidate) => candidate.versionId === artifact.versionId);
+    if (!version || version.pptxPageRenderId !== artifact.artifactId) throw new HttpError(404, 'Authoritative page render is not bound to this project version.');
+    return { bytes: await this.objectStorage.getBytes(artifact.assetPath), width: artifact.width, height: artifact.height };
   }
 
   usage(ownerId: string, projectId: string): UsageLedgerEntry[] {
