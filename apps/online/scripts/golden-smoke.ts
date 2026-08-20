@@ -5,13 +5,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseSlidesMarkdown } from '../server/contracts.js';
+import { resolvePythonBin } from '../server/workerBridge.js';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const worker = path.resolve(scriptDir, '..', 'worker', 'export_pptx.py');
 const fixture = path.resolve(scriptDir, '..', 'tests', 'fixtures', 'golden-deck.md');
 
 async function runWorker(payload: unknown, outputPath: string): Promise<{ output: string; qa: string }> {
-  const python = process.env.PYTHON_BIN || 'python';
+  const python = resolvePythonBin();
   return new Promise((resolve, reject) => {
     const child = spawn(python, [worker, '--output', outputPath], { cwd: path.dirname(worker), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PYTHONUTF8: '1' } });
     let stdout = '';
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
     const slides = parseSlidesMarkdown(await fs.readFile(fixture, 'utf8'));
     assert.equal(slides.length, 7);
     const imagePath = path.join(directory, 'field-study.png');
-    const python = process.env.PYTHON_BIN || 'python';
+    const python = resolvePythonBin();
     await new Promise<void>((resolve, reject) => {
       const child = spawn(python, ['-c', 'from PIL import Image; import sys; Image.new("RGB", (960, 540), (37, 99, 235)).save(sys.argv[1], "PNG")', imagePath], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, PYTHONUTF8: '1' } });
       let stderr = '';

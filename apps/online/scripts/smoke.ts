@@ -25,10 +25,15 @@ async function waitForExport(token: string, projectId: string, exportId: string)
 }
 
 async function main(): Promise<void> {
-  const health = await request<{ renderer: string; exporter: string; deploymentMode: string; apiInstanceCount: number }>(undefined, '/api/v1/health');
+  const health = await request<{ persistence: string; renderer: string; exporter: string; deploymentMode: string; apiInstanceCount: number }>(undefined, '/api/v1/health');
   assert.equal(health.exporter, 'ppt_master_svg_to_drawingml');
-  assert.equal(health.deploymentMode, 'single_api_writer');
-  assert.equal(health.apiInstanceCount, 1);
+  if (health.persistence === 'postgres') {
+    assert.equal(health.deploymentMode, 'transactional_postgres_multi_writer');
+    assert.ok(health.apiInstanceCount >= 1);
+  } else {
+    assert.equal(health.deploymentMode, 'development_single_process');
+    assert.equal(health.apiInstanceCount, 1);
+  }
   const expectedPageStatus = health.renderer === 'powerpoint_com' ? 'authoritative' : 'svg_fallback';
   const login = await request<{ token: string }>(undefined, '/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email: `smoke-${Date.now()}@fastppt.local`, name: 'Smoke Runner' }) });
   const markdown = '# Cover 2026\n\n38% baseline and 2026 target.\n---\n# Two-column evidence\n\nKeep all numbers: 38% and 68%.\n---\n# Timeline delivery\n\nThree stages from plan to QA.';
@@ -47,8 +52,10 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve, reject) => { socket.once('open', () => resolve()); socket.once('error', reject); });
 
   const single = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/chat/turns`, { method: 'POST', body: JSON.stringify({ projectId: project.projectId, deckRevisionId: project.currentDeckRevisionId, target: { mode: 'single', pageIds: [first.pageId] }, message: '标题改短，保留所有数字；右侧改为两列', clientRevision: 0 }) });
-  assert.equal(single.operation.confirmationRequired, false);
-  assert.equal(single.operation.status, 'completed');
+  assert.equal(single.operation.confirmationRequired, true);
+  assert.equal(single.operation.status, 'planned');
+  const firstConfirmed = await request<{ operation: any }>(login.token, `/api/v2/projects/${project.projectId}/plans/${single.operation.operationId}/confirm`, { method: 'POST', body: JSON.stringify({ operationId: single.operation.operationId }) });
+  assert.equal(firstConfirmed.operation.status, 'completed');
   let refreshed = (await request<{ project: any }>(login.token, `/api/v1/projects/${project.projectId}`)).project;
   const refreshedFirst = refreshed.pages.find((page: any) => page.pageId === first.pageId);
   assert.equal(refreshedFirst.versions.length, 2);
@@ -115,6 +122,20 @@ async function main(): Promise<void> {
   if (health.renderer === 'powerpoint_com') assert.ok(artifacts.artifacts.some((artifact) => artifact.kind === 'pptx_page_render' && artifact.source === 'powerpoint_com' && artifact.assetPath === null), 'PowerPoint PNG provenance must be registered without exposing its object key');
   const snapshots = await request<{ promptSnapshots: any[] }>(login.token, `/api/v1/projects/${project.projectId}/prompt-snapshots`);
   assert.ok(snapshots.promptSnapshots.some((snapshot) => snapshot.prompt && snapshot.hash), 'complete prompt snapshots must be queryable');
+  const history = await request<{ messages: any[]; operations: any[]; sessions: any[] }>(login.token, `/api/v1/projects/${project.projectId}/history`);
+  assert.ok(history.messages.some((message) => message.role === 'user') && history.messages.some((message) => message.role === 'assistant'), 'history must aggregate both sides of the conversation');
+  const completedHistory = history.operations.find((operation) => operation.operationId === firstConfirmed.operation.operationId);
+  assert.ok(completedHistory, 'history must include the confirmed operation');
+  assert.equal(completedHistory.status, 'completed');
+  assert.equal(typeof completedHistory.durationMs, 'number', 'history must expose operation duration');
+  assert.equal(typeof completedHistory.actualCost, 'number', 'history must expose actual cost');
+  assert.equal(completedHistory.currency, 'USD');
+  assert.ok(Array.isArray(completedHistory.models), 'history must expose the operation model list');
+  assert.ok(Array.isArray(completedHistory.warnings), 'history must expose operation warnings');
+  assert.ok(['passed', 'warning', 'failed', 'pending'].includes(completedHistory.qaStatus), 'history must expose operation QA status');
+  assert.ok(completedHistory.versionIds.length > 0, 'history must expose result version IDs');
+  assert.ok(completedHistory.pages.some((page: any) => page.pageId === first.pageId && page.versionId), 'history must link affected pages to versions');
+  assert.ok(completedHistory.pages.every((page: any) => Object.hasOwn(page, 'model') && typeof page.cost === 'number' && Array.isArray(page.warnings)), 'history page audit fields are incomplete');
   const beforeSplit = imported.project.pages.find((page: any) => page.pageId === second.pageId).versions.length;
   const splitPlan = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/pages/${second.pageId}/split`, { method: 'POST' });
   assert.equal(splitPlan.operation.status, 'planned');
@@ -134,10 +155,8 @@ async function main(): Promise<void> {
   await request(login.token, `/api/v1/projects/${project.projectId}/edit-operations/${protectedTurn.operation.operationId}/cancel`, { method: 'POST' });
   if (!(await request<any>(undefined, '/api/v1/health')).relay.configured) {
     const failedImage = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/chat/turns`, { method: 'POST', body: JSON.stringify({ projectId: project.projectId, deckRevisionId: afterSplit.currentDeckRevisionId, target: { mode: 'single', pageIds: [factPage.pageId] }, message: '替换当前图片', clientRevision: 4 }) });
-    assert.equal(failedImage.operation.status, 'failed');
-    const retry = await request<{ operation: any }>(login.token, `/api/v1/projects/${project.projectId}/edit-operations/${failedImage.operation.operationId}/retry-failed`, { method: 'POST' });
-    assert.equal(retry.operation.parentOperationId, failedImage.operation.operationId);
-    assert.deepEqual(retry.operation.resolvedPageIds, failedImage.operation.failedPageIds);
+    assert.equal(failedImage.operation.status, 'planned');
+    assert.equal(failedImage.operation.visualPreviews?.[0]?.status, 'failed');
   }
   await new Promise((resolve) => setTimeout(resolve, 180));
   assert.ok(wsEvents.includes('preview.quick.ready'), `expected quick preview event, got ${wsEvents.join(',')}`);

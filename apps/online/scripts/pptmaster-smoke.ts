@@ -4,12 +4,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolvePythonBin } from '../server/workerBridge.js';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const worker = path.resolve(scriptDir, '..', 'worker', 'export_pptx.py');
 
 async function makePng(outputPath: string): Promise<void> {
-  const python = process.env.PYTHON_BIN || 'python';
+  const python = resolvePythonBin();
   await new Promise<void>((resolve, reject) => {
     const child = spawn(python, [
       '-c',
@@ -28,7 +29,7 @@ async function makePng(outputPath: string): Promise<void> {
 }
 
 async function runWorker(payload: unknown, outputPath: string): Promise<{ output: string; qa: string }> {
-  const python = process.env.PYTHON_BIN || 'python';
+  const python = resolvePythonBin();
   return new Promise((resolve, reject) => {
     const child = spawn(python, [worker, '--output', outputPath], {
       cwd: path.dirname(worker),

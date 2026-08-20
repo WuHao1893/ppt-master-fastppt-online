@@ -1,7 +1,7 @@
 # FastPPT Online
 
 This directory is the browser-based online workbench described in
-`FastPPT_在线聊天精修_spec.md`. The browser sends business requests to the
+`FastPPT_在线聊天精修_v2_spec.md`. The browser sends business requests to the
 server, while the server owns contracts, facts, prompts, cost reservations,
 render status, and export artifacts. The export worker consumes the retained
 official `skills/ppt-master` distribution to rebuild each page from validated
@@ -48,16 +48,17 @@ container creates the `fastppt-online` bucket. The API can still use its file
 store and local object store for development. Production mode requires
 PostgreSQL and S3-compatible object storage and fails startup instead of
 silently using local fallbacks. Durable edit/export jobs are persisted before
-execution, dispatched with the bounded `JOB_CONCURRENCY` worker, and re-enqueued
-after an interrupted process restart. `REDIS_URL` remains reserved for a future
-independently scaled transport.
+execution and claimed with PostgreSQL `FOR UPDATE SKIP LOCKED` leases. Workers
+heartbeat active leases, retry transient failures with bounded exponential
+backoff, and recover expired jobs after a process restart. `JOB_CONCURRENCY`,
+`JOB_MAX_ATTEMPTS`, `JOB_LEASE_MS`, and `JOB_POLL_MS` tune the dispatcher.
 
-This release is deliberately a single-writer deployment. Set
-`API_INSTANCE_COUNT=1`; production startup rejects a larger value because the
-PostgreSQL store still keeps a process-local working snapshot. The health
-response reports `deploymentMode=single_api_writer`. Horizontal API writers
-require transactional row-level commands and database-assigned event sequences
-in a future release.
+PostgreSQL is the production source of truth. Every mutation refreshes state
+while holding the store transaction lock and persists only changed rows; API
+reads refresh through the same transaction boundary. Multiple API writers may
+therefore share a database, while the file store remains a single-process
+development fallback. Health reports
+`deploymentMode=transactional_postgres_multi_writer` for this mode.
 
 ## Behaviour covered
 
@@ -94,13 +95,35 @@ in a future release.
 
 ## API outline
 
-The REST surface follows the Spec under `/api/v1`: auth, projects, import,
-pages, page split, chat turns, operation confirmation/cancellation, version
-rollback, group rollback, failed-page retry, render/export, and usage ledger. The WebSocket server accepts a
+The V2 REST surface is under `/api/v2`: auth, projects, work sessions, document
+upload and parsing, document context toggles, conflict listing/resolution,
+structured plan creation/query/confirmation/cancellation, page chat, versions,
+render/export, and usage/audit endpoints. Document uploads are accepted only
+after a workflow mode is selected: `.md`, `.docx`, and `.pdf` for document import;
+`.pptx` for PPT beautification. Parsed documents are persisted in the project
+资料池 with SHA-256 deduplication, source metadata, facts, structure, and
+cross-document conflict state. Blocking conflicts are rejected by the server
+until a conflict resolution is recorded for the current work session.
+
+The legacy REST surface under `/api/v1` remains available for the original
+stable-page workflows: auth, projects, import, pages, page split, chat turns,
+operation confirmation/cancellation, version rollback, group rollback,
+failed-page retry, render/export, and usage ledger. The WebSocket server accepts a
 one-time `fastppt-ticket.<ticket>` subprotocol plus
 `?projectId=<id>&afterSeq=<n>`, then replays missed events before subscribing to
 live updates. Session tokens are carried by an HttpOnly cookie or REST bearer
 header, not a WebSocket URL.
+
+V2 deployment limits are configured on the server, not trusted from the browser:
+`MAX_DOCUMENT_BYTES` (single file), `MAX_DOCUMENT_FILES` (files per session),
+`MAX_DOCUMENT_BATCH_BYTES` (session batch), `MAX_DOCUMENT_TEXT_CHARS` (parsed
+text), `MAX_DOCUMENT_UNCOMPRESSED_BYTES` and `MAX_DOCUMENT_ARCHIVE_ENTRIES`
+(DOCX/PPTX archive safety), and `DOCUMENT_PARSE_TIMEOUT_MS` (worker timeout).
+`PUBLIC_PREVIEW_BASE_URL`
+controls the external Office Online Viewer entry point. A short-lived,
+hash-backed preview grant is required for the PPTX URL; enabling project
+`sensitiveMode` revokes existing grants and blocks third-party preview, leaving
+the FastPPT authoritative PNG/download path available.
 
 For the normalized PostgreSQL entity contract, see `database/schema.sql`.
 The local JSON store is a development fallback, not a production replacement

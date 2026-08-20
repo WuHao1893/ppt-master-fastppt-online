@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +17,21 @@ const renderWorkerCandidates = [
   path.resolve(serverDir, '..', 'worker', 'render_powerpoint.py'),
   path.resolve(serverDir, '..', '..', 'worker', 'render_powerpoint.py'),
 ];
+
+export function resolvePythonBin(): string {
+  const configured = process.env.PYTHON_BIN?.trim();
+  if (configured) return configured;
+  const executable =
+    process.platform === 'win32'
+      ? path.join('Scripts', 'python.exe')
+      : path.join('bin', 'python');
+  const candidates = [
+    path.resolve(process.cwd(), '.venv', executable),
+    path.resolve(process.cwd(), '..', '.venv', executable),
+    path.resolve(serverDir, '..', '..', '..', '..', '.venv', executable),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || 'python';
+}
 
 export interface PptxExportResult {
   outputPath: string;
@@ -51,7 +67,7 @@ export async function runPptxExport(
   await fs.mkdir(resolvedOutputDir, { recursive: true });
   const outputPath = path.resolve(resolvedOutputDir, fileName);
   if (!outputPath.startsWith(`${resolvedOutputDir}${path.sep}`)) throw new Error('Export path escaped the project artifact directory.');
-  const python = process.env.PYTHON_BIN || 'python';
+  const python = resolvePythonBin();
   let workerScript = '';
   for (const candidate of workerCandidates) {
     try {
@@ -158,7 +174,7 @@ export async function runPowerPointRender(inputPath: string, outputDir: string):
     }
   }
   if (!workerScript) throw new Error('PowerPoint COM render worker is missing from the application package.');
-  const python = process.env.PYTHON_BIN || 'python';
+  const python = resolvePythonBin();
   const stagingRoot = await powerpointStagingRoot();
   const stagingDir = path.join(stagingRoot, crypto.randomBytes(8).toString('hex'));
   const stagedInput = path.join(stagingDir, 'input.pptx');

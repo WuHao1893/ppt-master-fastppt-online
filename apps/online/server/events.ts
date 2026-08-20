@@ -12,7 +12,17 @@ export class EventBus {
   async publish(input: Omit<EventEnvelope, 'seq' | 'createdAt'>): Promise<EventEnvelope> {
     let event!: EventEnvelope;
     await this.store.update((state) => {
-      event = { ...input, seq: ++state.seq, createdAt: nowIso() };
+      const operation = input.operationId
+        ? state.operations.find(
+            (candidate) => candidate.operationId === input.operationId,
+          )
+        : undefined;
+      event = {
+        ...input,
+        sessionId: input.sessionId || operation?.sessionId || undefined,
+        seq: ++state.seq,
+        createdAt: nowIso(),
+      };
       state.events.push(event);
       if (state.events.length > 5000) state.events.splice(0, state.events.length - 5000);
     });
